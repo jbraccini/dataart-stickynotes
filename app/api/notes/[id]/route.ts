@@ -16,11 +16,21 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid update payload" }, { status: 400 });
   }
 
-  if (Object.keys(update).length > 0) {
-    db.update(notes).set(update).where(eq(notes.id, id)).run();
+  // With no fields to change, just confirm the note exists.
+  if (Object.keys(update).length === 0) {
+    const [row] = await db.select().from(notes).where(eq(notes.id, id));
+    if (!row) {
+      return NextResponse.json({ error: "Note not found" }, { status: 404 });
+    }
+    return NextResponse.json<Note>(row);
   }
 
-  const row = db.select().from(notes).where(eq(notes.id, id)).get();
+  const [row] = await db
+    .update(notes)
+    .set(update)
+    .where(eq(notes.id, id))
+    .returning();
+
   if (!row) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
@@ -31,8 +41,8 @@ export async function PATCH(request: Request, { params }: Params) {
 // DELETE /api/notes/:id — remove one note.
 export async function DELETE(_request: Request, { params }: Params) {
   const { id } = await params;
-  const result = db.delete(notes).where(eq(notes.id, id)).run();
-  if (result.changes === 0) {
+  const deleted = await db.delete(notes).where(eq(notes.id, id)).returning();
+  if (deleted.length === 0) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
   return new NextResponse(null, { status: 204 });
