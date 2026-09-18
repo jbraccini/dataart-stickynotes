@@ -32,6 +32,9 @@ export interface Note {
 
 /** Rectangle + color chosen when a note is created. */
 export interface NoteInput {
+  // Client-generated id, used directly as the primary key so optimistic
+  // creates never need a temp-id → server-id reconciliation.
+  id: string;
   x: number;
   y: number;
   width: number;
@@ -42,6 +45,9 @@ export interface NoteInput {
 
 /** Any subset of a note's mutable fields, sent on update. */
 export type NoteUpdate = Partial<Omit<Note, "id">>;
+
+/** One entry in a bulk update: the target id plus the fields to change. */
+export type NoteBulkUpdate = { id: string } & NoteUpdate;
 
 export interface Rect {
   x: number;
