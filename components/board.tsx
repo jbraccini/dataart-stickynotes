@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { StickyNote } from "@/components/sticky-note";
 import { TrashZone } from "@/components/trash-zone";
 import { ColorPicker } from "@/components/color-picker";
 import { Button } from "@/components/ui/button";
 import { useNotes } from "@/hooks/use-notes";
+import { cn } from "@/lib/utils";
 import {
   DEFAULT_NOTE_SIZE,
   MIN_NOTE_SIZE,
@@ -33,7 +34,8 @@ function rectFromPoints(ax: number, ay: number, bx: number, by: number): Rect {
 }
 
 export function Board() {
-  const { notes, error, createNote, patchNote, removeNote, bringToFront } = useNotes();
+  const { notes, error, isLoading, createNote, patchNote, patchNotes, removeNote, bringToFront } =
+    useNotes();
 
   const boardRef = useRef<HTMLDivElement>(null);
   const trashRef = useRef<HTMLDivElement>(null);
@@ -47,20 +49,57 @@ export function Board() {
   const [newColor, setNewColor] = useState<ColorChoice>("random");
   const [draftRect, setDraftRect] = useState<Rect | null>(null);
 
+  // Board pan offset (canvas → screen). Notes live in canvas coordinates; the
+  // canvas layer is translated by this. `spaceHeld` arms pan mode; `panning`
+  // disables the pan transition so it tracks the pointer 1:1.
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [panning, setPanning] = useState(false);
+
   // Position of the most recently created note, used to place the next one.
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const create = useCallback(
-    (input: NoteInput) => {
+    (input: Omit<NoteInput, "id">) => {
       lastPosRef.current = { x: input.x, y: input.y };
-      void createNote(input);
+      createNote(input);
     },
     [createNote],
   );
 
-  const boardPoint = (clientX: number, clientY: number) => {
+  // Hold Space to pan (ignored while typing in a note).
+  useEffect(() => {
+    const isTyping = () => {
+      const el = document.activeElement;
+      return (
+        el instanceof HTMLElement &&
+        (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.isContentEditable)
+      );
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !isTyping()) {
+        e.preventDefault(); // stop the page from scrolling
+        setSpaceHeld(true);
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceHeld(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  // Client point → canvas point (undo the board offset and the current pan).
+  const canvasPoint = (clientX: number, clientY: number) => {
     const bounds = boardRef.current?.getBoundingClientRect();
-    return { x: clientX - (bounds?.left ?? 0), y: clientY - (bounds?.top ?? 0) };
+    return {
+      x: clientX - (bounds?.left ?? 0) - pan.x,
+      y: clientY - (bounds?.top ?? 0) - pan.y,
+    };
   };
 
   const isChrome = (target: EventTarget | null) => {
@@ -68,13 +107,36 @@ export function Board() {
     return !!el?.closest('[data-testid="sticky-note"]') || !!el?.closest("[data-no-create]");
   };
 
-  // Rubber-band create: drag on empty board to set position and size.
-  const startCreate = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (isChrome(event.target) || !boardRef.current) return;
-    const origin = boardPoint(event.clientX, event.clientY);
+  // Pan the board while Space is held (started from the overlay).
+  const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation(); // don't let the board's create handler also fire
+    setPanning(true);
+    const originClient = { x: event.clientX, y: event.clientY };
+    const originPan = pan;
 
     const handleMove = (e: PointerEvent) => {
-      const p = boardPoint(e.clientX, e.clientY);
+      setPan({
+        x: originPan.x + (e.clientX - originClient.x),
+        y: originPan.y + (e.clientY - originClient.y),
+      });
+    };
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      setPanning(false);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+  };
+
+  // Rubber-band create: drag on empty board to set position and size.
+  const startCreate = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (spaceHeld || isChrome(event.target) || !boardRef.current) return;
+    const origin = canvasPoint(event.clientX, event.clientY);
+
+    const handleMove = (e: PointerEvent) => {
+      const p = canvasPoint(e.clientX, e.clientY);
       setDraftRect(rectFromPoints(origin.x, origin.y, p.x, p.y));
     };
 
@@ -83,7 +145,7 @@ export function Board() {
       window.removeEventListener("pointerup", handleUp);
       setDraftRect(null);
 
-      const p = boardPoint(e.clientX, e.clientY);
+      const p = canvasPoint(e.clientX, e.clientY);
       const drawn = rectFromPoints(origin.x, origin.y, p.x, p.y);
       // Ignore clicks; only a real drag creates a note (double-click also creates).
       if (drawn.width < DRAG_THRESHOLD && drawn.height < DRAG_THRESHOLD) return;
@@ -103,8 +165,8 @@ export function Board() {
 
   // Double-click on empty space drops a default-sized note.
   const createOnDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (isChrome(event.target)) return;
-    const p = boardPoint(event.clientX, event.clientY);
+    if (spaceHeld || isChrome(event.target)) return;
+    const p = canvasPoint(event.clientX, event.clientY);
     create({
       x: p.x,
       y: p.y,
@@ -128,9 +190,12 @@ export function Board() {
     create({ x, y, width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE, color: resolveColor(newColor) });
   };
 
-  // Arrange notes into a grid centered in the viewport; they remain draggable.
+  // Reset the pan and arrange notes into a grid centered in the viewport, so the
+  // centered layout lines up with what the user sees. Notes remain draggable.
   const sortIntoGrid = () => {
     if (notes.length === 0) return;
+    setPan({ x: 0, y: 0 });
+
     const cols = Math.ceil(Math.sqrt(notes.length));
     const rows = Math.ceil(notes.length / cols);
     const step = SORT_CELL + SORT_GAP;
@@ -139,11 +204,14 @@ export function Board() {
     const startX = Math.max(20, (window.innerWidth - gridW) / 2);
     const startY = Math.max(96, (window.innerHeight - gridH) / 2);
 
-    notes.forEach((note, i) => {
-      const x = startX + (i % cols) * step;
-      const y = startY + Math.floor(i / cols) * step;
-      void patchNote(note.id, { x, y, width: SORT_CELL, height: SORT_CELL });
-    });
+    const updates = notes.map((note, i) => ({
+      id: note.id,
+      x: startX + (i % cols) * step,
+      y: startY + Math.floor(i / cols) * step,
+      width: SORT_CELL,
+      height: SORT_CELL,
+    }));
+    patchNotes(updates);
   };
 
   return (
@@ -151,7 +219,12 @@ export function Board() {
       ref={boardRef}
       onPointerDown={startCreate}
       onDoubleClick={createOnDoubleClick}
-      className="relative h-screen w-screen overflow-hidden"
+      className="board-surface relative h-screen w-screen overflow-hidden"
+      style={{
+        // Move the dotted grid with the pan so it reads as one continuous board.
+        backgroundPosition: `${pan.x}px ${pan.y}px`,
+        transition: panning ? "none" : "background-position 300ms ease",
+      }}
     >
       <header
         data-no-create
@@ -164,7 +237,7 @@ export function Board() {
             <ColorPicker value={newColor} onSelect={setNewColor} allowRandom />
           </div>
           <span className="text-xs text-muted-foreground">
-            Drag or double-click empty space to create
+            Drag or double-click to create · hold Space to pan
           </span>
         </div>
 
@@ -178,29 +251,61 @@ export function Board() {
         </div>
       </header>
 
-      <AnimatePresence>
-        {notes.map((note) => (
-          <StickyNote
-            key={note.id}
-            note={note}
-            getTrashRect={getTrashRect}
-            onCommit={(update) => void patchNote(note.id, update)}
-            onDelete={() => void removeNote(note.id)}
-            onRaise={() => bringToFront(note.id)}
-            onOverTrashChange={setTrashActive}
-          />
-        ))}
-      </AnimatePresence>
-
-      {draftRect && (
+      {isLoading ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex flex-wrap justify-center gap-6 opacity-60">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[180px] w-[180px] animate-pulse rounded-md border border-border bg-muted"
+                style={{ animationDelay: `${i * 120}ms` }}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
         <div
-          className="pointer-events-none absolute rounded-md border-2 border-dashed border-primary/50 bg-primary/5"
+          className="absolute inset-0"
           style={{
-            left: draftRect.x,
-            top: draftRect.y,
-            width: draftRect.width,
-            height: draftRect.height,
+            transform: `translate(${pan.x}px, ${pan.y}px)`,
+            // Instant while panning; ease when the pan is set programmatically (Sort).
+            transition: panning ? "none" : "transform 300ms ease",
           }}
+        >
+          <AnimatePresence>
+            {notes.map((note) => (
+              <StickyNote
+                key={note.id}
+                note={note}
+                getTrashRect={getTrashRect}
+                onCommit={(update) => void patchNote(note.id, update)}
+                onDelete={() => void removeNote(note.id)}
+                onRaise={() => bringToFront(note.id)}
+                onOverTrashChange={setTrashActive}
+              />
+            ))}
+          </AnimatePresence>
+
+          {draftRect && (
+            <div
+              className="pointer-events-none absolute rounded-md border-2 border-dashed border-primary/50 bg-primary/5"
+              style={{
+                left: draftRect.x,
+                top: draftRect.y,
+                width: draftRect.width,
+                height: draftRect.height,
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* While Space is held, this overlay captures the drag so panning works
+          even over notes (and suppresses create). */}
+      {spaceHeld && (
+        <div
+          onPointerDown={startPan}
+          className={cn("absolute inset-0 z-[9990]", panning ? "cursor-grabbing" : "cursor-grab")}
         />
       )}
 
