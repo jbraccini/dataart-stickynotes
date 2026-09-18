@@ -1,12 +1,24 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
 
-const DB_FILE = process.env.SQLITE_PATH ?? "sqlite.db";
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not set. Point it at the Supabase transaction pooler.");
+}
 
-// better-sqlite3 is synchronous. A single shared connection is reused across
-// requests in the Node server; the route handlers wrap access in async handlers.
-const sqlite = new Database(DB_FILE);
-sqlite.pragma("journal_mode = WAL");
+// Supabase's transaction pooler (port 6543) does not support prepared
+// statements, so `prepare` must be disabled. The client is cached on
+// globalThis in development so Next.js Fast Refresh doesn't exhaust the pool.
+const globalForDb = globalThis as unknown as {
+  client?: ReturnType<typeof postgres>;
+};
 
-export const db = drizzle(sqlite, { schema });
+const client =
+  globalForDb.client ?? postgres(connectionString, { prepare: false });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForDb.client = client;
+}
+
+export const db = drizzle(client, { schema });
