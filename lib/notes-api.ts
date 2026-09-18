@@ -1,4 +1,4 @@
-import type { Note, NoteInput, NoteUpdate } from "@/lib/types";
+import type { Note, NoteBulkUpdate, NoteInput, NoteUpdate } from "@/lib/types";
 
 const BASE = "/api/notes";
 
@@ -28,6 +28,16 @@ export const notesApi = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(update),
     }).then((r) => json<Note>(r));
+  },
+
+  // Apply many updates in one request (used by Sort); the server runs them in a
+  // single transaction.
+  updateMany(updates: NoteBulkUpdate[]): Promise<Note[]> {
+    return fetch(BASE, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ updates }),
+    }).then((r) => json<Note[]>(r));
   },
 
   async remove(id: string): Promise<void> {
