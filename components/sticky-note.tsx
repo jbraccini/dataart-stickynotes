@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ColorPicker } from "@/components/color-picker";
 import { useDragInteraction } from "@/hooks/use-drag-interaction";
@@ -31,12 +31,33 @@ export function StickyNote({
   const { start } = useDragInteraction();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Transient geometry while a drag/resize is in flight; null when idle.
+  // Transient geometry while a drag/resize is in flight, and held for one extra
+  // frame after release so the committed position can propagate before we hand
+  // rendering back to the note prop; null when idle.
   const [draft, setDraft] = useState<Rect | null>(null);
   const [overTrash, setOverTrash] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(note.text);
+
+  // Clear the post-release draft on the next frame, once the committed value has
+  // reached the note prop. This keeps the position transition instant across the
+  // release so a fast flick never springs ("inertia"); the spring is reserved
+  // for self-moves like Sort, which run with draft === null.
+  const clearFrameRef = useRef<number | null>(null);
+  const scheduleDraftClear = useCallback(() => {
+    if (clearFrameRef.current !== null) cancelAnimationFrame(clearFrameRef.current);
+    clearFrameRef.current = requestAnimationFrame(() => {
+      clearFrameRef.current = null;
+      setDraft(null);
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (clearFrameRef.current !== null) cancelAnimationFrame(clearFrameRef.current);
+    },
+    [],
+  );
 
   // Keep local text in sync when the note changes and we are not editing.
   useEffect(() => {
@@ -54,6 +75,11 @@ export function StickyNote({
     height: note.height,
   };
 
+  // While a draft exists (dragging or settling right after release) geometry is
+  // driven by the pointer, so position changes must be instant. With no draft,
+  // any position change is a self-move (e.g. Sort) and should spring.
+  const positionTransition = draft !== null || dragging ? { duration: 0 } : POSITION_SPRING;
+
   const beginMove = (event: React.PointerEvent) => {
     onRaise();
     const target = event.target as HTMLElement;
@@ -69,14 +95,18 @@ export function StickyNote({
         onOverTrashChange?.(over);
       },
       onCommit: (rect, over) => {
-        setDraft(null);
         setDragging(false);
         setOverTrash(false);
         onOverTrashChange?.(false);
         if (over) {
+          setDraft(null);
           onDelete();
         } else {
+          // Pin to the exact release position instantly, persist it, then drop
+          // the draft next frame — no spring across the release.
+          setDraft(rect);
           onCommit({ x: rect.x, y: rect.y });
+          scheduleDraftClear();
         }
       },
     });
@@ -91,9 +121,10 @@ export function StickyNote({
       rect: geometry,
       onPreview: (rect) => setDraft(rect),
       onCommit: (rect) => {
-        setDraft(null);
         setDragging(false);
+        setDraft(rect);
         onCommit({ width: rect.width, height: rect.height });
+        scheduleDraftClear();
       },
     });
   };
@@ -134,11 +165,11 @@ export function StickyNote({
       transition={{
         opacity: { duration: 0.15 },
         scale: { type: "spring", stiffness: 500, damping: 32 },
-        // Follow the pointer instantly during a drag; spring into place otherwise.
-        left: dragging ? { duration: 0 } : POSITION_SPRING,
-        top: dragging ? { duration: 0 } : POSITION_SPRING,
-        width: dragging ? { duration: 0 } : POSITION_SPRING,
-        height: dragging ? { duration: 0 } : POSITION_SPRING,
+        // Instant while dragging/settling; spring only for self-moves (Sort).
+        left: positionTransition,
+        top: positionTransition,
+        width: positionTransition,
+        height: positionTransition,
       }}
       style={{ position: "absolute", zIndex: note.z }}
       className={cn(
