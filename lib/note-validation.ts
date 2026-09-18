@@ -14,6 +14,8 @@ export function parseNoteInput(body: unknown): NoteInput | null {
   const b = body as Record<string, unknown>;
 
   if (
+    typeof b.id !== "string" ||
+    b.id.length === 0 ||
     !isFiniteNumber(b.x) ||
     !isFiniteNumber(b.y) ||
     !isFiniteNumber(b.width) ||
@@ -24,6 +26,7 @@ export function parseNoteInput(body: unknown): NoteInput | null {
   }
 
   return {
+    id: b.id,
     x: b.x,
     y: b.y,
     width: b.width,
