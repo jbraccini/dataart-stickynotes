@@ -41,7 +41,13 @@
 body {
   background-color: var(--background);
   color: var(--foreground);
-  /* Subtle corkboard grid so the board reads as a surface, not a void. */
+}
+
+/*
+  Subtle corkboard grid so the board reads as a surface, not a void. Applied to
+  the board element (not body) so its background-position can track the pan.
+*/
+.board-surface {
   background-image: radial-gradient(
     circle at 1px 1px,
     color-mix(in oklch, var(--foreground) 8%, transparent) 1px,
