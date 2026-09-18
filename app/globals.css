@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/*
+  shadcn-style theme tokens, adapted for Tailwind v4.
+  Only the chrome (buttons, surfaces) reads these; notes use their own palette.
+*/
+:root {
+  --background: oklch(0.97 0.01 95);
+  --foreground: oklch(0.2 0.02 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.02 60);
+  --primary: oklch(0.45 0.05 60);
+  --primary-foreground: oklch(0.98 0.01 95);
+  --muted: oklch(0.92 0.01 95);
+  --muted-foreground: oklch(0.5 0.02 60);
+  --border: oklch(0.87 0.01 90);
+  --ring: oklch(0.6 0.04 60);
+  --radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  /* Subtle corkboard grid so the board reads as a surface, not a void. */
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    color-mix(in oklch, var(--foreground) 8%, transparent) 1px,
+    transparent 0
+  );
+  background-size: 24px 24px;
+}
