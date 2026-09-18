@@ -1,0 +1,19 @@
+/node_modules
+/.next
+/out
+/build
+
+# Local SQLite database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+
+# Env
+.env*.local
+
+# Editor / OS
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
